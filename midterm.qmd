@@ -1,0 +1,394 @@
+---
+title: "midterm"
+format: html
+format: 
+  html:
+    embed-resources: true
+editor: visual
+---
+
+# Midterm Report
+
+## Preliminaries
+
+NOTES FROM 3/20
+
+-   keep only california and florida
+-   survey contains chemicals and codes
+    -   codes turn into words?
+-   pick 3 chemicals, contrast chemical use between FL and CA
+    -   pick your own measures so that you find a contrast — need to see it graphically
+        -   such as \# applications, lbs / acre
+-   income contrast between FL and CA strawberry growers dependent on conventional, processing, and organic
+-   don't need to use data that you don't find useful
+-   turn echo off... so you only get words, tables, graphs
+-   make sure there is writing! doesn't have to say a whole lot
+-   due 3/27??
+-   include linear regression in at least one
+-   look at cheatsheets for help
+
+```{r}
+#| label: load libraries
+#| warning: false
+#| message: false
+
+library(knitr)  
+library(kableExtra)
+library(tidyverse)
+library(stringr)
+library(ggplot2)
+library(patchwork)
+library(scales)
+```
+
+```{r}
+#| label: read data - glimpse 
+
+strawberry <- read_csv("strawb_mar6.csv", 
+                       col_names = TRUE, 
+                       show_col_types = FALSE)
+
+source("my_functions.R")
+```
+
+## Data Cleaning
+
+```{r}
+#| label: drop unnecessary columns from `strawberry`
+
+strawb <- strawberry |> drop_one_value_col()
+```
+
+```{r}
+#| label: explore strawb data
+
+
+test <- strawb |> show_unique(10)
+```
+
+```{r}
+#| label: split strawb into two data frames
+
+census <- strawb |> filter(Program == "CENSUS")
+survey <- strawb |> filter(Program == "SURVEY")
+```
+
+```{r}
+#| label: exploring unique values
+
+census <- census |> drop_one_value_col(prt_val = TRUE)
+survey <- survey |> drop_one_value_col(prt_val = TRUE)
+
+unique_sur <- survey |> show_unique(nrows = 10)
+unique_cen <- census |> show_unique(nrows = 10)
+
+census <- census |> select(-`State ANSI`)
+survey <- survey |> select(-`State ANSI`, -`Week Ending`, -`Period`)
+
+census <- census |> filter(State == "CALIFORNIA" | State == "FLORIDA")
+survey <- survey |> filter(State == "CALIFORNIA" | State == "FLORIDA")
+
+rm(strawberry, strawb)
+
+```
+
+```{r}
+#| label: work on census columns
+
+commod <- census$Commodity |> unique()
+
+# splitting Commodity
+census <- census |>
+  separate_wider_delim(
+    cols = Commodity,
+    delim = ", ",
+    names = c("Income","Net Cash Farm", "Straw"),
+    too_many = "error",
+    #names_sep = " ",
+    too_few = "align_start"
+  )
+
+# removing redundant data in Data Item
+census <- census |> 
+  mutate(`Data Item` = str_replace(`Data Item`, "INCOME, NET CASH FARM, ", ""))
+census <- census |> 
+  mutate(`Data Item` = str_replace(`Data Item`, "STRAWBERRIES, ", ""))
+
+unique_cen <- census |> show_unique(10)
+census <- census |> drop_one_value_col(prt_val = TRUE)
+
+# splitting Data Item
+census <- census |>
+  separate_wider_delim(
+    cols = `Data Item`,
+    delim = " - ",
+    names = c("Production","Category"),
+    too_many = "error",
+    too_few = "align_start"
+  )
+
+# splitting Production
+census <- census |>
+  separate_wider_delim(
+    cols = Production,
+    delim = ", ",
+    names = c("Production", "Marketing Channel"),
+    too_many = "error",
+    too_few = "align_start"
+  )
+
+# splitting Category
+census <- census |>
+  separate_wider_delim(
+    cols = Category,
+    delim = ", ",
+    names = c("Category", "Metric"),
+    too_many = "error",
+    too_few = "align_start"
+  )
+
+# removing redundant info
+census <- census |> 
+  mutate(`Metric` = str_replace(Metric, "MEASURED IN ", ""))
+
+vals = c("NET GAIN: \\(", "NET LOSS: \\(", "AREA OPERATED: \\(", "ECONOMIC CLASS: \\(", "FARM SALES: \\(", "NAICS CLASSIFICATION: \\(", "ORGANIC STATUS: \\(", "\\)")
+for (i in 1:length(vals)) {
+  census <- census |>
+  mutate(`Domain Category` = str_replace(`Domain Category`, vals[i], ""))
+}
+
+# converting strings into numerics
+census$Value <- as.numeric(gsub(",", "", census$Value))
+census$`CV (%)` <- as.numeric(gsub(",", "", census$`CV (%)`))
+```
+
+```{r}
+#| label: work on survey columns
+
+# splitting Data Item
+survey <- survey |> separate_wider_delim(
+  cols = `Data Item`,
+  delim = ' - ',
+  names = c("Marketing Channel", "Category"),
+  too_many = "error",
+  too_few = "align_start"
+)
+
+# splitting Marketing Channel
+survey <- survey |> separate_wider_delim(
+  cols = `Marketing Channel`,
+  delim = ', ',
+  names = c("Fruit", "Marketing Channel"),
+  too_many = "error",
+  too_few = "align_start"
+)
+
+vals = c("(D)", "(NA)")
+for (i in 1:length(vals)) {
+  survey <- survey |> mutate(Value = str_replace(Value, vals[i], NA_character_)) 
+}
+
+# converting strings into numerics
+survey$Value <- as.numeric(gsub(",", "", survey$Value))
+
+# splitting Category
+survey <- survey |> separate_wider_delim(
+  cols = `Category`,
+  delim = ', ',
+  names = c("Category", "Metric"),
+  too_many = "merge",
+  too_few = "align_start"
+)
+
+# splitting Domain
+survey <- survey |> separate_wider_delim(
+  cols = Domain,
+  delim = ", ",
+  names = c("na", "Chemical Type"),
+  too_few = "align_start"
+)
+
+survey <- survey |> shift_loc("na", "FERTILIZER", 1, 1)
+
+# removing redundant info
+survey <- survey |> 
+  mutate(`Metric` = str_replace(Metric, "MEASURED IN ", ""))
+
+vals = c("CHEMICAL, HERBICIDE: \\(", "CHEMICAL, FUNGICIDE: \\(", "CHEMICAL, INSECTICIDE: \\(", "CHEMICAL, OTHER: \\(", "FERTILIZER: \\(", "\\)")
+for (i in 1:length(vals)) {
+ survey <- survey |>
+  mutate(`Domain Category` = str_replace(`Domain Category`, vals[i], "")) 
+}
+survey <- survey |> 
+  mutate(`Domain Category` = str_replace(`Domain Category`, "NOT SPECIFIED", NA_character_))
+
+# splitting Domain Category
+survey <- survey |> separate_wider_delim(
+  cols = `Domain Category`,
+  delim = " = ",
+  names = c("Chemical", "Chemical Code"),
+  too_few = "align_start"
+)
+```
+
+```{r}
+#| label: further determining unique values
+
+unique_cen <- show_unique(census)
+unique_sur <- show_unique(survey)
+
+```
+
+```{r}
+#| label: assignment shorter results
+
+census_fl <- census |> filter(State == "FLORIDA")
+census_ca <- census |> filter(State == "CALIFORNIA")
+
+survey_fl <- survey |> filter(State == "FLORIDA")
+survey_ca <- survey |> filter(State == "CALIFORNIA")
+
+rm(census, survey, unique_cen, unique_sur, test)
+```
+
+```{r}
+#| label: removing unnecessary columns
+
+census_fl <- census_fl |> drop_one_value_col(prt_val = TRUE)
+census_ca <- census_ca |> drop_one_value_col(prt_val = TRUE)
+
+survey_fl <- survey_fl |> drop_one_value_col(prt_val = TRUE)
+survey_ca <- survey_ca |> drop_one_value_col(prt_val = TRUE)
+
+```
+
+```{r}
+#| label: creating chemicals data frame
+
+chemicals_ca <- survey_ca |> filter(na == "CHEMICAL" | is.na(na))
+chemicals_fl <- survey_fl |> filter(na == "CHEMICAL" | is.na(na))
+
+chem_ca_unq <- chemicals_ca |> show_unique()
+chem_fl_unq <- chemicals_fl |> show_unique()
+
+chemicals_ca <- chemicals_ca |> select(-na)
+chemicals_fl <- chemicals_fl |> select(-na)
+```
+
+```{r}
+#| label: splitting bearing and non-bearing strawberries
+
+chemicals_ca_bearing <- chemicals_ca |> filter(`Marketing Channel` == "BEARING")
+chemicals_ca_nonbearing <- chemicals_ca |> filter(is.na(`Marketing Channel`))
+
+chemicals_fl_bearing <- chemicals_fl |> filter(`Marketing Channel` == "BEARING")
+chemicals_fl_nonbearing <- chemicals_fl |> filter(is.na(`Marketing Channel`))
+
+chemicals_ca_nonbearing <- chemicals_ca_nonbearing |> select(-`Marketing Channel`, -Value)
+chemicals_fl_nonbearing <- chemicals_fl_nonbearing |> select(-`Marketing Channel`, -Value)
+
+chemicals_ca_bearing <- chemicals_ca_bearing |> select(-`Marketing Channel`)
+chemicals_fl_bearing <- chemicals_fl_bearing |> select(-`Marketing Channel`)
+```
+
+```{r}
+#| label: determining most used chemicals by year and state
+
+# 2021 most used chemicals by state
+most_chems_ca_21 <- chemicals_ca_bearing |> filter(Year == "2021",
+                                                   Category == "APPLICATIONS",
+                                                   Metric == "LB",
+                                                   Chemical != "TOTAL") |>
+                                            arrange(desc(Value))
+most_chems_fl_21 <- chemicals_fl_bearing |> filter(Year == "2021",
+                                                   Category == "APPLICATIONS",
+                                                   Metric == "LB",
+                                                   Chemical != "TOTAL") |>
+                                            arrange(desc(Value))
+
+# 2023 most used chemicals by state
+most_chems_ca_23 <- chemicals_ca_bearing |> filter(Year == "2023",
+                                                   Category == "APPLICATIONS",
+                                                   Metric == "LB",
+                                                   Chemical != "TOTAL") |>
+                                            arrange(desc(Value))
+most_chems_fl_23 <- chemicals_fl_bearing |> filter(Year == "2023",
+                                                   Category == "APPLICATIONS",
+                                                   Metric == "LB",
+                                                   Chemical != "TOTAL")|>
+                                            arrange(desc(Value))
+
+top3_chem_ca21 <- most_chems_ca_21[1:3, ]
+top3_chem_fl21 <- most_chems_fl_21[1:3, ]
+
+top3_chem_ca23 <- most_chems_ca_23[1:3, ]
+top3_chem_fl23 <- most_chems_fl_23[1:3, ]
+
+top3_chems <- rbind(top3_chem_ca21, top3_chem_ca23, top3_chem_fl21, top3_chem_fl23)
+top3_chems <- top3_chems |> mutate(State = ifelse(row_number() <= 6, "CALIFORNIA", "FLORIDA"))
+
+rm(top3_chem_ca21, top3_chem_ca23, top3_chem_fl21, top3_chem_fl23, most_chems_ca_21, most_chems_ca_23, most_chems_fl_21, most_chems_fl_23)
+
+```
+
+```{r}
+#| label: visualize top 3 chemical use by state
+
+top3_21 <- top3_chems |> filter(Year == "2021")
+top3_23 <- top3_chems |> filter(Year == "2023")
+
+p1 <- ggplot(top3_21, aes(Chemical, Value, fill= `State`)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Year, scales = "free_y") +
+  geom_text(aes(label = Value), 
+            vjust = -0.5, 
+            color = "black", 
+            size = 2.5) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x = "Chemical",
+    y = "Value"
+  ) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(hjust = 0.5))
+
+p2 <- ggplot(top3_23, aes(Chemical, Value, fill= `State`)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Year, scales = "free_y") +
+  geom_text(aes(label = Value), 
+            vjust = -0.5, 
+            color = "black", 
+            size = 2.5) + 
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    x = "Chemical",
+    y = "Value"
+  ) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(hjust = 0.5))
+
+
+(p1 + p2) +
+  plot_layout(guides = "collect") +
+  plot_annotation(title = "Most Used Chemicals by State and Year") &
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+```
+
+```{r}
+#| label: determining common chemicals used by both FL and CA
+
+chemicals_fl <- chemicals_fl |> mutate(State = "FLORIDA")
+chemicals_ca <- chemicals_ca |> mutate(State = "CALIFORNIA")
+common_chems <- rbind(chemicals_fl, chemicals_ca)
+common_chems <- common_chems |> drop_na(Value)
+
+```
+
+Based on the graph above and the `common_chems` data frame, I will explore Thiram, Captan, and Fludioxonil.
+
+## Exploring Chemicals
+
+```{r}
+
+```
