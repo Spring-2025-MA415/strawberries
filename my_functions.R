@@ -24,6 +24,10 @@ drop_one_value_col <- function(df, prt_val = FALSE){
         df <- df[, -1*dropc]
         return(df)
       }
+  } else {
+    if(is.null(dropc)){
+      return(df)
+    }
   }
   df <- df[, -1*dropc]
   return(df)

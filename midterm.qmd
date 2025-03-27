@@ -1,31 +1,14 @@
 ---
-title: "midterm"
-format: html
+title: "Midterm Report"
 format: 
   html:
     embed-resources: true
 editor: visual
+execute:
+  echo: false
 ---
 
-# Midterm Report
-
-## Preliminaries
-
-NOTES FROM 3/20
-
--   keep only california and florida
--   survey contains chemicals and codes
-    -   codes turn into words?
--   pick 3 chemicals, contrast chemical use between FL and CA
-    -   pick your own measures so that you find a contrast — need to see it graphically
-        -   such as \# applications, lbs / acre
--   income contrast between FL and CA strawberry growers dependent on conventional, processing, and organic
--   don't need to use data that you don't find useful
--   turn echo off... so you only get words, tables, graphs
--   make sure there is writing! doesn't have to say a whole lot
--   due 3/27??
--   include linear regression in at least one
--   look at cheatsheets for help
+I am starting with cleaning the data and then separating it into 4 data sets: California census, California survey, Florida census, and Florida survey.
 
 ```{r}
 #| label: load libraries
@@ -39,6 +22,7 @@ library(stringr)
 library(ggplot2)
 library(patchwork)
 library(scales)
+library(readr)
 ```
 
 ```{r}
@@ -51,8 +35,6 @@ strawberry <- read_csv("strawb_mar6.csv",
 source("my_functions.R")
 ```
 
-## Data Cleaning
-
 ```{r}
 #| label: drop unnecessary columns from `strawberry`
 
@@ -61,6 +43,7 @@ strawb <- strawberry |> drop_one_value_col()
 
 ```{r}
 #| label: explore strawb data
+#| warning: false
 
 
 test <- strawb |> show_unique(10)
@@ -76,8 +59,8 @@ survey <- strawb |> filter(Program == "SURVEY")
 ```{r}
 #| label: exploring unique values
 
-census <- census |> drop_one_value_col(prt_val = TRUE)
-survey <- survey |> drop_one_value_col(prt_val = TRUE)
+census <- census |> drop_one_value_col()
+survey <- survey |> drop_one_value_col()
 
 unique_sur <- survey |> show_unique(nrows = 10)
 unique_cen <- census |> show_unique(nrows = 10)
@@ -94,6 +77,7 @@ rm(strawberry, strawb)
 
 ```{r}
 #| label: work on census columns
+#| warning: false
 
 commod <- census$Commodity |> unique()
 
@@ -115,7 +99,7 @@ census <- census |>
   mutate(`Data Item` = str_replace(`Data Item`, "STRAWBERRIES, ", ""))
 
 unique_cen <- census |> show_unique(10)
-census <- census |> drop_one_value_col(prt_val = TRUE)
+census <- census |> drop_one_value_col()
 
 # splitting Data Item
 census <- census |>
@@ -127,6 +111,8 @@ census <- census |>
     too_few = "align_start"
   )
 
+census <- census |> mutate(Production = str_replace(Production, "OF ", ""))
+
 # splitting Production
 census <- census |>
   separate_wider_delim(
@@ -137,19 +123,6 @@ census <- census |>
     too_few = "align_start"
   )
 
-# splitting Category
-census <- census |>
-  separate_wider_delim(
-    cols = Category,
-    delim = ", ",
-    names = c("Category", "Metric"),
-    too_many = "error",
-    too_few = "align_start"
-  )
-
-# removing redundant info
-census <- census |> 
-  mutate(`Metric` = str_replace(Metric, "MEASURED IN ", ""))
 
 vals = c("NET GAIN: \\(", "NET LOSS: \\(", "AREA OPERATED: \\(", "ECONOMIC CLASS: \\(", "FARM SALES: \\(", "NAICS CLASSIFICATION: \\(", "ORGANIC STATUS: \\(", "\\)")
 for (i in 1:length(vals)) {
@@ -158,12 +131,14 @@ for (i in 1:length(vals)) {
 }
 
 # converting strings into numerics
-census$Value <- as.numeric(gsub(",", "", census$Value))
-census$`CV (%)` <- as.numeric(gsub(",", "", census$`CV (%)`))
+census$Value <- parse_number(census$Value)
+census <- census |> mutate(`CV (%)` = str_replace(`CV (%)`, "(H)", "99.95"))
+census$`CV (%)` <- parse_number(census$`CV (%)`)
 ```
 
 ```{r}
 #| label: work on survey columns
+#| warning: false
 
 # splitting Data Item
 survey <- survey |> separate_wider_delim(
@@ -183,22 +158,24 @@ survey <- survey |> separate_wider_delim(
   too_few = "align_start"
 )
 
+# converting strings into numerics
 vals = c("(D)", "(NA)")
 for (i in 1:length(vals)) {
   survey <- survey |> mutate(Value = str_replace(Value, vals[i], NA_character_)) 
 }
-
-# converting strings into numerics
-survey$Value <- as.numeric(gsub(",", "", survey$Value))
+survey$Value <- parse_number(survey$Value)
 
 # splitting Category
 survey <- survey |> separate_wider_delim(
-  cols = `Category`,
-  delim = ', ',
+  cols = Category,
+  delim = ", MEASURED IN ",
   names = c("Category", "Metric"),
-  too_many = "merge",
   too_few = "align_start"
 )
+
+survey <- survey |> mutate(Category = str_replace(Category, "ACRES HARVESTED", "AREA HARVESTED"))
+
+survey$Metric[survey$Category == "AREA HARVESTED" & is.na(survey$Metric)] <- "ACRES"
 
 # splitting Domain
 survey <- survey |> separate_wider_delim(
@@ -210,9 +187,6 @@ survey <- survey |> separate_wider_delim(
 
 survey <- survey |> shift_loc("na", "FERTILIZER", 1, 1)
 
-# removing redundant info
-survey <- survey |> 
-  mutate(`Metric` = str_replace(Metric, "MEASURED IN ", ""))
 
 vals = c("CHEMICAL, HERBICIDE: \\(", "CHEMICAL, FUNGICIDE: \\(", "CHEMICAL, INSECTICIDE: \\(", "CHEMICAL, OTHER: \\(", "FERTILIZER: \\(", "\\)")
 for (i in 1:length(vals)) {
@@ -229,18 +203,14 @@ survey <- survey |> separate_wider_delim(
   names = c("Chemical", "Chemical Code"),
   too_few = "align_start"
 )
-```
 
-```{r}
-#| label: further determining unique values
-
-unique_cen <- show_unique(census)
-unique_sur <- show_unique(survey)
-
+rm(vals, i, commod)
 ```
 
 ```{r}
 #| label: assignment shorter results
+
+## creating census and survey datasets for both Florida and California
 
 census_fl <- census |> filter(State == "FLORIDA")
 census_ca <- census |> filter(State == "CALIFORNIA")
@@ -254,141 +224,499 @@ rm(census, survey, unique_cen, unique_sur, test)
 ```{r}
 #| label: removing unnecessary columns
 
-census_fl <- census_fl |> drop_one_value_col(prt_val = TRUE)
-census_ca <- census_ca |> drop_one_value_col(prt_val = TRUE)
+census_fl <- census_fl |> drop_one_value_col()
+census_ca <- census_ca |> drop_one_value_col()
 
-survey_fl <- survey_fl |> drop_one_value_col(prt_val = TRUE)
-survey_ca <- survey_ca |> drop_one_value_col(prt_val = TRUE)
+survey_fl <- survey_fl |> drop_one_value_col()
+survey_ca <- survey_ca |> drop_one_value_col()
+
+```
+
+# California
+
+All the data cleaning for California is done in this section.
+
+## Census Data
+
+In this section, I'm cleaning the census data for California. This is where I am getting the information for the operations vs producers section.
+
+```{r}
+#| label: splitting census_ca into 2021 and 2022
+
+census_ca_22 <- census_ca |> filter(Year == 2022)
+census_ca_21 <- census_ca |> filter(Year == 2021)
+
+census_ca_22 <- census_ca_22 |> drop_one_value_col()
+census_ca_21 <- census_ca_21 |> drop_one_value_col()
 
 ```
 
 ```{r}
-#| label: creating chemicals data frame
+#| label: splitting census_ca_22 into producers and operators
 
-chemicals_ca <- survey_ca |> filter(na == "CHEMICAL" | is.na(na))
-chemicals_fl <- survey_fl |> filter(na == "CHEMICAL" | is.na(na))
+census_ca_22_pr <- census_ca_22 |> filter(Production == "PRODUCERS")
+census_ca_22_op <- census_ca_22 |> filter(Production == "OPERATIONS")
 
-chem_ca_unq <- chemicals_ca |> show_unique()
-chem_fl_unq <- chemicals_fl |> show_unique()
+census_ca_22_pr <- census_ca_22_pr |> drop_one_value_col()
+census_ca_22_op <- census_ca_22_op |> drop_one_value_col()
 
-chemicals_ca <- chemicals_ca |> select(-na)
-chemicals_fl <- chemicals_fl |> select(-na)
-```
-
-```{r}
-#| label: splitting bearing and non-bearing strawberries
-
-chemicals_ca_bearing <- chemicals_ca |> filter(`Marketing Channel` == "BEARING")
-chemicals_ca_nonbearing <- chemicals_ca |> filter(is.na(`Marketing Channel`))
-
-chemicals_fl_bearing <- chemicals_fl |> filter(`Marketing Channel` == "BEARING")
-chemicals_fl_nonbearing <- chemicals_fl |> filter(is.na(`Marketing Channel`))
-
-chemicals_ca_nonbearing <- chemicals_ca_nonbearing |> select(-`Marketing Channel`, -Value)
-chemicals_fl_nonbearing <- chemicals_fl_nonbearing |> select(-`Marketing Channel`, -Value)
-
-chemicals_ca_bearing <- chemicals_ca_bearing |> select(-`Marketing Channel`)
-chemicals_fl_bearing <- chemicals_fl_bearing |> select(-`Marketing Channel`)
-```
-
-```{r}
-#| label: determining most used chemicals by year and state
-
-# 2021 most used chemicals by state
-most_chems_ca_21 <- chemicals_ca_bearing |> filter(Year == "2021",
-                                                   Category == "APPLICATIONS",
-                                                   Metric == "LB",
-                                                   Chemical != "TOTAL") |>
-                                            arrange(desc(Value))
-most_chems_fl_21 <- chemicals_fl_bearing |> filter(Year == "2021",
-                                                   Category == "APPLICATIONS",
-                                                   Metric == "LB",
-                                                   Chemical != "TOTAL") |>
-                                            arrange(desc(Value))
-
-# 2023 most used chemicals by state
-most_chems_ca_23 <- chemicals_ca_bearing |> filter(Year == "2023",
-                                                   Category == "APPLICATIONS",
-                                                   Metric == "LB",
-                                                   Chemical != "TOTAL") |>
-                                            arrange(desc(Value))
-most_chems_fl_23 <- chemicals_fl_bearing |> filter(Year == "2023",
-                                                   Category == "APPLICATIONS",
-                                                   Metric == "LB",
-                                                   Chemical != "TOTAL")|>
-                                            arrange(desc(Value))
-
-top3_chem_ca21 <- most_chems_ca_21[1:3, ]
-top3_chem_fl21 <- most_chems_fl_21[1:3, ]
-
-top3_chem_ca23 <- most_chems_ca_23[1:3, ]
-top3_chem_fl23 <- most_chems_fl_23[1:3, ]
-
-top3_chems <- rbind(top3_chem_ca21, top3_chem_ca23, top3_chem_fl21, top3_chem_fl23)
-top3_chems <- top3_chems |> mutate(State = ifelse(row_number() <= 6, "CALIFORNIA", "FLORIDA"))
-
-rm(top3_chem_ca21, top3_chem_ca23, top3_chem_fl21, top3_chem_fl23, most_chems_ca_21, most_chems_ca_23, most_chems_fl_21, most_chems_fl_23)
 
 ```
 
 ```{r}
-#| label: visualize top 3 chemical use by state
+#| label: exploring operations vs producers, net income and area operated in California
+#| warning: false
 
-top3_21 <- top3_chems |> filter(Year == "2021")
-top3_23 <- top3_chems |> filter(Year == "2023")
+net_inc_ca_pr <- census_ca_22_pr |> filter(Category == "NET INCOME, MEASURED IN $" & Domain == "AREA OPERATED")
+net_inc_ca_op <- census_ca_22_op |> filter(Category == "NET INCOME, MEASURED IN $" & Domain == "AREA OPERATED")
 
-p1 <- ggplot(top3_21, aes(Chemical, Value, fill= `State`)) +
+net_inc_ca_pr <- net_inc_ca_pr |> mutate(`Domain Category` = str_replace(`Domain Category`, " ACRES", ""))
+net_inc_ca_op <- net_inc_ca_op |> mutate(`Domain Category` = str_replace(`Domain Category`, " ACRES", ""))
+net_inc_ca_pr <- net_inc_ca_pr |> mutate(`Domain Category` = str_replace(`Domain Category`, "OR", "TO"))
+net_inc_ca_op <- net_inc_ca_op |> mutate(`Domain Category` = str_replace(`Domain Category`, "OR", "TO"))
+
+net_inc_ca_pr <- net_inc_ca_pr |> separate_wider_delim(
+  cols = `Domain Category`,
+  delim = " TO ",
+  names = c("Low", "High"),
+  too_few = "align_start",
+  too_many = "error"
+)
+
+net_inc_ca_op <- net_inc_ca_op |> separate_wider_delim(
+  cols = `Domain Category`,
+  delim = " TO ",
+  names = c("Low", "High"),
+  too_few = "align_start",
+  too_many = "error"
+)
+
+net_inc_ca_pr$Low <- parse_number(net_inc_ca_pr$Low)
+net_inc_ca_pr$High <- parse_number(net_inc_ca_pr$High)
+net_inc_ca_op$Low <- parse_number(net_inc_ca_op$Low)
+net_inc_ca_op$High <- parse_number(net_inc_ca_op$High)
+
+net_inc_ca_pr <- net_inc_ca_pr |> arrange(Low)
+net_inc_ca_op <- net_inc_ca_op |> arrange(Low)
+
+net_inc_ca_pr <- net_inc_ca_pr |> rename("Value ($)" = Value)
+net_inc_ca_op <- net_inc_ca_op |> rename("Value ($)" = Value)
+```
+
+```{r}
+#| label: creating a table comparing net income to area operated in California
+
+net_inc_ca_pr_table <- net_inc_ca_pr |> drop_one_value_col()
+net_inc_ca_op_table <- net_inc_ca_op |> drop_one_value_col()
+
+table1 <- net_inc_ca_pr_table |> kable()
+table2 <- net_inc_ca_op_table |> kable()
+
+table1 <- net_inc_ca_pr_table |> kbl(caption = "California's Producers Net Income in 2022 by Area Operated") |> kable_classic(full_width = F, html_font = "Cambria") |> add_header_above(c( "Area Range (acres)" = 2, " " = 1, " " = 1))
+
+table2 <- net_inc_ca_op_table |> kbl(caption = "California's Operations Net Income in 2022 by Area Operated") |> kable_classic(full_width = F, html_font = "Cambria") |> add_header_above(c( "Area Range (acres)" = 2, " " = 1, " " = 1))
+```
+
+## Survey Data
+
+I am cleaning the survey data for California in this section. Here is where I am discovering the information I use for California's chemical analysis.
+
+```{r}
+#| label: splitting survey_ca into years
+
+survey_ca_23 <- survey_ca |> filter(Year == 2023)
+survey_ca_22 <- survey_ca |> filter(Year == 2022)
+survey_ca_21 <- survey_ca |> filter(Year == 2021)
+survey_ca_20 <- survey_ca |> filter(Year == 2020)
+
+survey_ca_23 <- survey_ca_23 |> drop_one_value_col()
+survey_ca_22 <- survey_ca_22 |> drop_one_value_col()
+survey_ca_21 <- survey_ca_21 |> drop_one_value_col()
+survey_ca_20 <- survey_ca_20 |> drop_one_value_col()
+```
+
+```{r}
+#| label: determining chemicals used in California
+
+# only the 2021 and 2023 tibbles contain chemical information
+chemicals_ca_21 <- survey_ca_21 |> filter(!is.na(Chemical) & Chemical != "TOTAL")
+chemicals_ca_23 <- survey_ca_23 |> filter(!is.na(Chemical) & Chemical != "TOTAL")
+
+chemicals_ca_21 <- chemicals_ca_21 |> drop_one_value_col()
+chemicals_ca_23 <- chemicals_ca_23 |> drop_one_value_col()
+
+# removing unnecessary details
+chemicals_ca_23 <- chemicals_ca_23 |> select(-na)
+chemicals_ca_23 <- chemicals_ca_23 |> filter(!(is.na(`Marketing Channel`) & is.na(Value)))
+chemicals_ca_23 <- chemicals_ca_23 |> drop_one_value_col()
+```
+
+```{r}
+#| label: finding the chemicals that were used the most in applications in California
+
+chems_apps_ca_21 <- chemicals_ca_21 |> filter(Category == "APPLICATIONS" & Metric == "LB") |> arrange(desc(Value))
+chems_apps_ca_21 <- chems_apps_ca_21 |> filter(!is.na(Value))
+
+chems_apps_ca_23 <- chemicals_ca_23 |> filter(Category == "APPLICATIONS" & Metric == "LB") |> arrange(desc(Value))
+chems_apps_ca_23 <- chems_apps_ca_23 |> filter(!is.na(Value))
+
+top5_chem_apps_ca21 <- chems_apps_ca_21[1:5,]
+top5_chem_apps_ca23 <- chems_apps_ca_23[1:5,]
+
+top5_chem_apps_ca21$Year <- "2021"
+top5_chem_apps_ca23$Year <- "2023"
+top5_chems_ca_combined <- rbind(top5_chem_apps_ca21, top5_chem_apps_ca23)
+
+plot1_top <- ggplot(top5_chems_ca_combined, aes(x=Chemical, y=Value, fill=Year)) + 
   geom_bar(stat = "identity") +
-  facet_wrap(~ Year, scales = "free_y") +
-  geom_text(aes(label = Value), 
-            vjust = -0.5, 
-            color = "black", 
-            size = 2.5) +
-  scale_y_continuous(labels = label_comma()) +
+  facet_wrap(~ Year, scales = "free") +
+  geom_text(aes(label = Value), vjust = -0.5, size = 2.5) +
   labs(
+    title = "Top 5 Chemicals Used in California by Year",
     x = "Chemical",
-    y = "Value"
-  ) + 
-  theme_minimal() + 
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(hjust = 0.5))
+    y = "Applications (in lbs)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
 
-p2 <- ggplot(top3_23, aes(Chemical, Value, fill= `State`)) +
+bottom5_chem_apps_ca21 <- tail(chems_apps_ca_21, 5)
+bottom5_chem_apps_ca23 <- tail(chems_apps_ca_23, 5)
+
+bottom5_chem_apps_ca21$Year <- "2021"
+bottom5_chem_apps_ca23$Year <- "2023"
+bottom5_chems_ca_combined <- rbind(bottom5_chem_apps_ca21, bottom5_chem_apps_ca23)
+
+plot1_bottom <- ggplot(bottom5_chems_ca_combined, aes(x=Chemical, y=Value, fill=Year)) + 
   geom_bar(stat = "identity") +
-  facet_wrap(~ Year, scales = "free_y") +
-  geom_text(aes(label = Value), 
-            vjust = -0.5, 
-            color = "black", 
-            size = 2.5) + 
-  scale_y_continuous(labels = label_comma()) +
+  facet_wrap(~ Year, scales = "free") +
+  geom_text(aes(label = Value), vjust = -0.5, size = 2.5) +
   labs(
+    title = "Bottom 5 Chemicals Used in California by Year",
     x = "Chemical",
-    y = "Value"
-  ) + 
-  theme_minimal() + 
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(hjust = 0.5))
+    y = "Applications (in lbs)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+```
 
+# Florida
 
-(p1 + p2) +
-  plot_layout(guides = "collect") +
-  plot_annotation(title = "Most Used Chemicals by State and Year") &
-  theme(legend.position = "bottom",
-        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+All the data cleaning for Florida is done in this section.
+
+## Census Data
+
+In this section, I'm cleaning the census data for Florida. Similarly to California, this is where I am getting the information for the operations vs producers section.
+
+```{r}
+#| label: splitting census_fl into 2021 and 2022
+
+census_fl_22 <- census_fl |> filter(Year == 2022)
+census_fl_21 <- census_fl |> filter(Year == 2021)
+
+census_fl_22 <- census_fl_22 |> drop_one_value_col()
+census_fl_21 <- census_fl_21 |> drop_one_value_col()
+
 ```
 
 ```{r}
-#| label: determining common chemicals used by both FL and CA
+#| label: splitting census_fl_22 into producers and operators
 
-chemicals_fl <- chemicals_fl |> mutate(State = "FLORIDA")
-chemicals_ca <- chemicals_ca |> mutate(State = "CALIFORNIA")
-common_chems <- rbind(chemicals_fl, chemicals_ca)
-common_chems <- common_chems |> drop_na(Value)
+census_fl_22_pr <- census_fl_22 |> filter(Production == "PRODUCERS")
+census_fl_22_op <- census_fl_22 |> filter(Production == "OPERATIONS")
+
+census_fl_22_pr <- census_fl_22_pr |> drop_one_value_col()
+census_fl_22_op <- census_fl_22_op |> drop_one_value_col()
+
 
 ```
-
-Based on the graph above and the `common_chems` data frame, I will explore Thiram, Captan, and Fludioxonil.
-
-## Exploring Chemicals
 
 ```{r}
+#| label: exploring operations vs producers, net income and area operated in Florida
+#| warning: false
+
+net_inc_fl_pr <- census_fl_22_pr |> filter(Category == "NET INCOME, MEASURED IN $" & Domain == "AREA OPERATED")
+net_inc_fl_op <- census_fl_22_op |> filter(Category == "NET INCOME, MEASURED IN $" & Domain == "AREA OPERATED")
+
+net_inc_fl_pr <- net_inc_fl_pr |> mutate(`Domain Category` = str_replace(`Domain Category`, " ACRES", ""))
+net_inc_fl_op <- net_inc_fl_op |> mutate(`Domain Category` = str_replace(`Domain Category`, " ACRES", ""))
+net_inc_fl_pr <- net_inc_fl_pr |> mutate(`Domain Category` = str_replace(`Domain Category`, "OR", "TO"))
+net_inc_fl_op <- net_inc_fl_op |> mutate(`Domain Category` = str_replace(`Domain Category`, "OR", "TO"))
+
+net_inc_fl_pr <- net_inc_fl_pr |> separate_wider_delim(
+  cols = `Domain Category`,
+  delim = " TO ",
+  names = c("Low", "High"),
+  too_few = "align_start",
+  too_many = "error"
+)
+
+net_inc_fl_op <- net_inc_fl_op |> separate_wider_delim(
+  cols = `Domain Category`,
+  delim = " TO ",
+  names = c("Low", "High"),
+  too_few = "align_start",
+  too_many = "error"
+)
+
+net_inc_fl_pr$Low <- parse_number(net_inc_fl_pr$Low)
+net_inc_fl_pr$High <- parse_number(net_inc_fl_pr$High)
+net_inc_fl_op$Low <- parse_number(net_inc_fl_op$Low)
+net_inc_fl_op$High <- parse_number(net_inc_fl_op$High)
+
+net_inc_fl_pr <- net_inc_fl_pr |> arrange(Low)
+net_inc_fl_op <- net_inc_fl_op |> arrange(Low)
+
+net_inc_fl_pr <- net_inc_fl_pr |> rename("Value ($)" = Value)
+net_inc_fl_op <- net_inc_fl_op |> rename("Value ($)" = Value)
+```
+
+```{r}
+#| label: creating a table comparing net income to area operated in Florida
+
+net_inc_fl_pr_table <- net_inc_fl_pr |> drop_one_value_col()
+net_inc_fl_op_table <- net_inc_fl_op |> drop_one_value_col()
+
+table3 <- net_inc_fl_pr_table |> kable()
+table4 <- net_inc_fl_op_table |> kable()
+
+table3 <- net_inc_fl_pr_table |> kbl(caption = "Florida's Producers Net Income in 2022 by Area Operated") |> kable_classic(full_width = F, html_font = "Cambria") |> add_header_above(c( "Area Range (acres)" = 2, " " = 1, " " = 1))
+
+table4 <- net_inc_fl_op_table |> kbl(caption = "Florida's Operations Net Income in 2022 by Area Operated") |> kable_classic(full_width = F, html_font = "Cambria") |> add_header_above(c( "Area Range (acres)" = 2, " " = 1, " " = 1))
+```
+
+## Survey Data
+
+I am cleaning the survey data for Florida in this section. Like with California, here is where I am discovering the information I use for Florida chemical analysis.
+
+```{r}
+#| label: splitting survey_fl into years
+
+survey_fl_23 <- survey_fl |> filter(Year == 2023)
+survey_fl_22 <- survey_fl |> filter(Year == 2022)
+survey_fl_21 <- survey_fl |> filter(Year == 2021)
+survey_fl_20 <- survey_fl |> filter(Year == 2020)
+
+survey_fl_23 <- survey_fl_23 |> drop_one_value_col()
+survey_fl_22 <- survey_fl_22 |> drop_one_value_col()
+survey_fl_21 <- survey_fl_21 |> drop_one_value_col()
+survey_fl_20 <- survey_fl_20 |> drop_one_value_col()
+```
+
+```{r}
+#| label: determining chemicals used in Florida
+
+# only the 2021 and 2023 tibbles contain chemical information
+chemicals_fl_21 <- survey_fl_21 |> filter(!is.na(Chemical) & Chemical != "TOTAL")
+chemicals_fl_23 <- survey_fl_23 |> filter(!is.na(Chemical) & Chemical != "TOTAL")
+
+chemicals_fl_21 <- chemicals_fl_21 |> drop_one_value_col()
+chemicals_fl_23 <- chemicals_fl_23 |> drop_one_value_col()
+
+# removing unnecessary details
+chemicals_fl_23 <- chemicals_fl_23 |> select(-na)
+chemicals_fl_23 <- chemicals_fl_23 |> filter(!(is.na(`Marketing Channel`) & is.na(Value)))
+chemicals_fl_23 <- chemicals_fl_23 |> drop_one_value_col()
+```
+
+```{r}
+#| label: finding the chemicals that were used the most in applications in Florida
+
+chems_apps_fl_21 <- chemicals_fl_21 |> filter(Category == "APPLICATIONS" & Metric == "LB") |> arrange(desc(Value))
+chems_apps_fl_21 <- chems_apps_fl_21 |> filter(!is.na(Value))
+
+chems_apps_fl_23 <- chemicals_fl_23 |> filter(Category == "APPLICATIONS" & Metric == "LB") |> arrange(desc(Value))
+chems_apps_fl_23 <- chems_apps_fl_23 |> filter(!is.na(Value))
+
+top5_chem_apps_fl21 <- chems_apps_fl_21[1:5,]
+top5_chem_apps_fl23 <- chems_apps_fl_23[1:5,]
+
+top5_chem_apps_fl21$Year <- "2021"
+top5_chem_apps_fl23$Year <- "2023"
+top5_chems_fl_combined <- rbind(top5_chem_apps_fl21, top5_chem_apps_fl23)
+
+plot2_top <- ggplot(top5_chems_fl_combined, aes(x=Chemical, y=Value, fill=Year)) + 
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Year, scales = "free") +
+  geom_text(aes(label = Value), vjust = -0.5, size = 2.5) +
+  labs(
+    title = "Top 5 Chemicals Used in Florida by Year",
+    x = "Chemical",
+    y = "Applications (in lbs)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+
+bottom5_chem_apps_fl21 <- tail(chems_apps_fl_21, 5)
+bottom5_chem_apps_fl23 <- tail(chems_apps_fl_23, 5)
+
+bottom5_chem_apps_fl21$Year <- "2021"
+bottom5_chem_apps_fl23$Year <- "2023"
+bottom5_chems_fl_combined <- rbind(bottom5_chem_apps_fl21, bottom5_chem_apps_fl23)
+
+plot2_bottom <- ggplot(bottom5_chems_fl_combined, aes(x=Chemical, y=Value, fill=Year)) + 
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Year, scales = "free") +
+  geom_text(aes(label = Value), vjust = -0.5, size = 2.5) +
+  labs(
+    title = "Bottom 5 Chemicals Used in Florida by Year",
+    x = "Chemical",
+    y = "Applications (in lbs)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+```
+
+# Chemical Analysis
+
+First, I'm comparing the top 5 chemicals used in each state.
+
+```{r}
+#| label: comparing top 5 chemicals in each state
+
+plot1_top
+plot2_top
+
+## shared chemicals between the top 5 chemicals in each state include: CAPTAN and NITROGEN
+```
+
+Now I'm comparing the the bottom 5 chemicals used in each state.
+
+```{r}
+#| label: comparing bottom 5 chemicals in each state
+
+plot1_bottom
+plot2_bottom
+
+## shared chemicals between the bottom 5 chemicals in each state include: ABAMECTIN and THIAMETHOXAM
+```
+
+Based on the above graphs, shared chemicals between the top 5 chemicals in each state include captan and nitrogen, and the bottom 5 chemicals in each state include abamectin and thiamethoxam. Using this information, I will compare the usage of captan, nitrogen, and abamectin between California and Florida.
+
+```{r}
+#| label: creating tables of Captan, Nitrogen, and Abamectin
+
+top5_chems_ca_combined$State = "CALIFORNIA"
+bottom5_chems_ca_combined$State = "CALIFORNIA"
+top5_chems_fl_combined$State = "FLORIDA"
+bottom5_chems_fl_combined$State = "FLORIDA"
+chemicals_combined <- rbind(top5_chems_ca_combined, bottom5_chems_ca_combined, top5_chems_fl_combined, bottom5_chems_fl_combined)
+
+# removing some variables since not needed
+rm(top5_chems_ca_combined, bottom5_chems_ca_combined, top5_chems_fl_combined, bottom5_chems_fl_combined, top5_chem_apps_ca21, top5_chem_apps_ca23, top5_chem_apps_fl21, top5_chem_apps_fl23, bottom5_chem_apps_ca21, bottom5_chem_apps_ca23, bottom5_chem_apps_fl21, bottom5_chem_apps_fl23, plot1_bottom, plot1_top, plot2_bottom, plot2_top, chemicals_ca_21, chemicals_ca_23, chemicals_fl_21, chemicals_fl_23, chems_apps_ca_21, chems_apps_ca_23, chems_apps_fl_21, chems_apps_fl_23)
+
+chemicals_combined <- chemicals_combined |> filter(Chemical == "CAPTAN" | Chemical == "NITROGEN" | Chemical == "ABAMECTIN")
+
+chemicals_combined <- unique(chemicals_combined)
+
+captan_usage <- chemicals_combined |> filter(Chemical == "CAPTAN") 
+captan_usage <- captan_usage |> drop_one_value_col()
+
+nitrogen_usage <- chemicals_combined |> filter(Chemical == "NITROGEN") 
+nitrogen_usage <- nitrogen_usage |> drop_one_value_col()
+
+abamectin_usage <- chemicals_combined |> filter(Chemical == "ABAMECTIN") 
+abamectin_usage <- abamectin_usage |> drop_one_value_col()
+abamectin_usage <- add_row(abamectin_usage, Value = NA, Year = "2021", State = "FLORIDA")
+abamectin_usage <- abamectin_usage |> mutate(Label = as.character(Value))
+abamectin_usage[4, 1] <- 0
+abamectin_usage[4, 4] <- "NA"
+```
+
+```{r}
+#| label: comparing usage of Captan, Nitrogen, and Abamectin
+
+captan_plot <- ggplot(captan_usage, aes(Year, Value, fill=State)) +
+  geom_bar(stat = "identity") + 
+  facet_wrap(~ State) +
+  geom_text(aes(label = Value), vjust = -0.5, size = 3) +
+  labs(
+    title = "Captan Usage by State and Year",
+    x = "Year",
+    y = "Applications (in lbs)"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+
+nitrogen_plot <- ggplot(nitrogen_usage, aes(State, Value, fill=State)) +
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label = Value), vjust = -0.5, size = 3) +
+  labs(
+    title = "Nitrogen Usage by State in 2023",
+    x = "State",
+    y = "Applications (in lbs)"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+
+abamectin_plot <- ggplot(abamectin_usage, aes(Year, Value, fill=State)) +
+  geom_bar(stat = "identity") + 
+  facet_wrap(~ State) +
+  geom_text(aes(label = Label), vjust = -0.5, size = 3) +
+  labs(
+    title = "Abamectin Usage by State and Year",
+    x = "Year",
+    y = "Applications (in lbs)"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+
+nitrogen_plot
+abamectin_plot
+captan_plot
 
 ```
+
+Nitrogen was only used in 2023 in both California and Florida. There is a 110,000 lb difference in application between states. I wonder if this is due to California producing more strawberries than Florida. Also, why is there no nitrogen usage in 2021 for both states?
+
+In regard to abamectin, both California and Florida used more in 2023 than 2021. Although Florida in 2021 doesn't have any data, I will assume that there was little to no usage. If I assume there is no usage, then both California and Florida use 100 lbs more in 2023 than in 2021.
+
+However, the difference in captan usage between states is drastic. There is a 349,500 lb difference between 2021 and 2023 in California and a 8,900 lb difference between 2021 and 2023 in Florida. What happened between 2021 and 2023 in California for the dramatic increase in captan usage? And why is there such a small difference in captan usage from 2021 to 2023 in Florida while there's a huge difference in California?
+
+# Operations vs Producers
+
+```{r}
+#| label: comparing operations and producers in each state
+
+# comparing operations and producers in California
+comparison_table_ca <- net_inc_ca_pr_table |>
+  left_join(net_inc_ca_op_table, by = c("Low", "High"))  # Adjust "Area" to your common column
+
+comparison_table_ca <- comparison_table_ca |> select(-`CV (%).x`, -`CV (%).y`)
+comparison_table_ca <- comparison_table_ca |> mutate("Difference in y-x ($) " = `Value ($).y` - `Value ($).x`)
+
+# comparing operations and producers in Florida
+comparison_table_fl <- net_inc_fl_pr_table |>
+  left_join(net_inc_fl_op_table, by = c("Low", "High"))  # Adjust "Area" to your common column
+
+comparison_table_fl <- comparison_table_fl |> select(-`CV (%).x`, -`CV (%).y`)
+comparison_table_fl <- comparison_table_fl |> mutate("Difference in y-x ($) " = `Value ($).y` - `Value ($).x`)
+```
+
+```{r}
+#| label: producing the tables for comparison
+
+# table for California
+comparison_table_ca |>
+  kbl(caption = "Comparison of California's Producers and Operations Net Income in 2022 by Area Operated") |>
+  kable_classic(full_width = FALSE, html_font = "Cambria") |>
+  add_header_above(c("Area Range (acres)" = 2, "Producers" = 1, "Operations" = 1, "Difference" = 1))
+
+# table for Florida
+comparison_table_fl |>
+  kbl(caption = "Comparison of Florida's Producers and Operations Net Income in 2022 by Area Operated") |>
+  kable_classic(full_width = FALSE, html_font = "Cambria") |>
+  add_header_above(c("Area Range (acres)" = 2, "Producers" = 1, "Operations" = 1, "Difference" = 1))
+```
+
+Based on the tables above, we see that the net income of operations is significantly higher than the net income of producers for both California and Florida. This suggests that larger agricultural businesses (operations) are more profitable due to factors such as better market access. However, producers likely face higher costs, which leads to a lower net income.
+
+We also see that California tends to see a higher profit than Florida in most of the area ranges. This suggests that California grows more strawberries than Florida, which can be further validated by this data set.
+
+# Further Analyses
+
+There were many topics explored above in regard to chemical analyses and operations/producers analyses. However, there is always more exploration to be done in a data set as large as this one. I suggest further analyses into the chemicals, specifically why some chemicals are used in one state and not in the other. Additionally, I'm curious to know what happened between 2021 and 2023 for there to be such an increase in chemical usage. On top of that, it would be good to know why there is no chemical information in 2020 and 2022.
+
+Regarding the operations/producers analyses, it would be interesting to learn the specifics behind why there is such a large difference in profit between the states. Is it due to only one reason, such as California producing more strawberries than Florida, or are there other reasons that have yet to be explored or seen in this data set?
+
+There are plenty more questions to be answered from this strawberry data set. I suggest the further exploration of the analyses above, in addition to other questions that an analyst may have.
